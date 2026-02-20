@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radar de Oportunidades - CARE Perú</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; max-width: 700px; margin: auto; background-color: #f3f4f6; color: #1f2937; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        textarea { width: 100%; height: 150px; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; margin-top: 10px; font-family: inherit; box-sizing: border-box; }
+        button { background: #0056b3; color: white; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 15px; font-size: 16px; transition: 0.3s;}
+        button:hover { background: #004494; }
+        pre { background: #111827; color: #10b981; padding: 20px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; font-size: 14px; margin-top: 20px; display: none;}
+        .loading { color: #6b7280; font-style: italic; display: none; margin-top: 15px; text-align: center;}
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>📡 Radar de Oportunidades (Fase 1)</h2>
+        <p>Pega aquí un extracto de los Términos de Referencia de la convocatoria. Llama 3.2 extraerá los datos críticos.</p>
+        
+        <textarea id="textoConvocatoria" placeholder="Ej: La Fundación otorgará un máximo de 500,000 euros. Se exige una contrapartida del 15%. Se reconocerán costos indirectos (ICR) hasta por un máximo de 7%..."></textarea>
+        
+        <button id="btnProcesar">Generar Hoja Resumen con IA</button>
+        <p id="cargando" class="loading">Procesando convocatoria con Llama 3.2... 🦙</p>
+        
+        <pre id="resultado"></pre>
+    </div>
+
+    <script>
+        document.getElementById('btnProcesar').addEventListener('click', async () => {
+            const btn = document.getElementById('btnProcesar');
+            const cargando = document.getElementById('cargando');
+            const resultado = document.getElementById('resultado');
+            const textoPDF = document.getElementById('textoConvocatoria').value;
+
+            if(!textoPDF) return alert("Por favor, pega un texto de la convocatoria primero.");
+
+            btn.disabled = true;
+            cargando.style.display = 'block';
+            resultado.style.display = 'none';
+            resultado.textContent = '';
+
+            const promptMaestro = `
+                Eres un especialista en formulación de proyectos de cooperación internacional.
+                Extrae la información clave del siguiente texto y devuelve ÚNICAMENTE un objeto JSON válido, sin texto extra.
+                
+                Esquema requerido:
+                {
+                  "donante": "Nombre de la entidad o fundación",
+                  "presupuesto_total": "Monto numérico extraído",
+                  "icr_permitido": "Porcentaje de costos indirectos",
+                  "requiere_match": true/false
+                }
+
+                Texto de las bases: ${textoPDF}
+            `;
+
+            try {
+                const respuesta = await fetch('http://localhost:11434/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: 'llama3.2', 
+                        prompt: promptMaestro,
+                        format: 'json',
+                        stream: false
+                    })
+                });
+
+                if (!respuesta.ok) throw new Error("Ollama no respondió. Verifica que esté corriendo.");
+
+                const data = await respuesta.json();
+                const jsonObj = JSON.parse(data.response);
+                
+                resultado.textContent = JSON.stringify(jsonObj, null, 2);
+                resultado.style.display = 'block';
+
+            } catch (error) {
+                resultado.textContent = "❌ ERROR: " + error.message;
+                resultado.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                cargando.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
