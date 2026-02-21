@@ -3,449 +3,499 @@ import { extractFromFile, extractFromUrl, ACCEPTED_EXTENSIONS, getFileIcon } fro
 import { analizarConvocatoria } from '../lib/ollama'
 import { supabase } from '../lib/supabase'
 
-const STATES = { IDLE: 'idle', EXTRACTING: 'extracting', ANALYZING: 'analyzing', REVIEW: 'review', SAVING: 'saving', DONE: 'done' }
+// ─── Estados del flujo ────────────────────────────────────────────────────────
+const IDLE       = 'IDLE'
+const EXTRACTING = 'EXTRACTING'
+const ANALYZING  = 'ANALYZING'
+const REVIEW     = 'REVIEW'
+const SAVING     = 'SAVING'
+const DONE       = 'DONE'
 
+// ─── Formulario vacío (22 campos) ────────────────────────────────────────────
 const emptyForm = {
-  titulo: '', donante: '', link_carpeta: '',
-  prioridades_tematicas: '', gerencia: '',
-  prioridades_geograficas: '', prioridades_demograficas: '',
-  duracion_meses: '', presupuesto_total: '', icr_permitido: '',
-  modalidad_desembolso: 'Subvención', requiere_match: false, requiere_socio: false,
+  titulo: '',
+  donante: '',
+  prioridades_tematicas: '',
+  gerencia: '',
+  prioridades_geograficas: '',
+  prioridades_demograficas: '',
+  duracion_meses: '',
+  presupuesto_total: '',
+  icr_permitido: '',
+  modalidad_desembolso: '',
+  requiere_match: '',
+  requiere_socio: '',
   fases_propuesta: '',
-  deadline_preguntas: '', deadline_envio: '',
-  fecha_probable_respuesta: '', fecha_probable_inicio: '', fecha_probable_fin: '',
-  contexto: '', objetivo_general: '', objetivos_especificos: '', puntos_clave: '',
+  deadline_preguntas: '',
+  deadline_envio: '',
+  fecha_probable_respuesta: '',
+  fecha_probable_inicio: '',
+  fecha_probable_fin: '',
+  contexto: '',
+  objetivo_general: '',
+  objetivos_especificos: '',
+  puntos_clave: '',
 }
 
-// ── Componentes pequeños ──────────────────────────────────
-function Toggle({ value, onChange, label }) {
-  return (
-    <div className="flex items-center gap-3">
-      <button type="button" onClick={() => onChange(!value)}
-        className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${value ? 'bg-blue-600' : 'bg-gray-200'}`}>
-        <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition duration-200 ${value ? 'translate-x-4' : 'translate-x-0'}`} />
-      </button>
-      <span className="text-sm text-gray-700">{label}</span>
-    </div>
-  )
-}
-
-function Label({ children }) {
-  return <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{children}</label>
-}
-
-function Input({ value, onChange, placeholder, type = 'text', ...props }) {
-  return (
-    <input type={type} value={value ?? ''} onChange={onChange} placeholder={placeholder}
-      className="w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow" {...props} />
-  )
-}
-
-function Textarea({ value, onChange, placeholder, rows = 3 }) {
-  return (
-    <textarea value={value ?? ''} onChange={onChange} placeholder={placeholder} rows={rows}
-      className="w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none transition-shadow" />
-  )
-}
-
+// ─── Componente de sección ────────────────────────────────────────────────────
 function SectionCard({ title, children }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      <div className="px-5 py-3 border-b border-gray-100 bg-gray-50">
-        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider">{title}</p>
+    <div className="border border-[#d0d7de] rounded-md overflow-hidden mb-4">
+      <div className="bg-[#f6f8fa] border-b border-[#d0d7de] px-4 py-2.5">
+        <h3 className="text-sm font-semibold text-[#24292f]">{title}</h3>
       </div>
-      <div className="p-5 space-y-4">{children}</div>
+      <div className="p-4 bg-white grid grid-cols-1 md:grid-cols-2 gap-4">
+        {children}
+      </div>
     </div>
   )
 }
 
-function Grid2({ children }) {
-  return <div className="grid grid-cols-2 gap-4">{children}</div>
-}
-
-// ── Pantalla de carga ─────────────────────────────────────
-function LoadingScreen({ state, progress }) {
+// ─── Campo de formulario ──────────────────────────────────────────────────────
+function Field({ label, children, full }) {
   return (
-    <div className="max-w-lg">
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-10 text-center space-y-4">
-        <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center mx-auto">
-          <svg className="animate-spin" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-          </svg>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-gray-800">
-            {state === 'extracting' ? 'Extrayendo contenido...' : 'Analizando con IA (llama3.2)...'}
-          </p>
-          <p className="text-xs text-gray-400 mt-1">
-            {state === 'extracting' ? progress : 'Esto puede tomar 30–90 segundos según el volumen del documento.'}
-          </p>
-        </div>
-      </div>
+    <div className={full ? 'md:col-span-2' : ''}>
+      <label className="block text-xs font-semibold text-[#57606a] mb-1">{label}</label>
+      {children}
     </div>
   )
 }
 
-// ── Formulario de revisión ────────────────────────────────
-function ReviewForm({ form, setForm, onGuardar, onCancelar, saving, error }) {
-  const f = (key) => (e) => setForm(prev => ({ ...prev, [key]: e.target.value }))
-  const b = (key) => (val) => setForm(prev => ({ ...prev, [key]: val }))
+const inputCls = 'w-full text-sm border border-[#d0d7de] rounded-md px-3 py-1.5 text-[#24292f] bg-white focus:outline-none focus:border-[#0969da] focus:ring-2 focus:ring-[#0969da]/20'
 
-  return (
-    <div className="max-w-3xl space-y-5 pb-10">
-      <div className="flex items-center gap-2 text-sm text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-4 py-2.5">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
-        <span className="text-blue-700 text-xs">Revisa y corrige los datos extraídos por la IA antes de guardar. Los campos en blanco no fueron encontrados en el documento.</span>
-      </div>
-
-      {/* 1. Info General */}
-      <SectionCard title="Información General">
-        <div>
-          <Label>Título de la convocatoria *</Label>
-          <Input value={form.titulo} onChange={f('titulo')} placeholder="Nombre oficial de la convocatoria" />
-        </div>
-        <Grid2>
-          <div>
-            <Label>Donante</Label>
-            <Input value={form.donante} onChange={f('donante')} placeholder="USAID, ECHO, AECID..." />
-          </div>
-          <div>
-            <Label>Gerencia responsable</Label>
-            <Input value={form.gerencia} onChange={f('gerencia')} placeholder="Gerencia de Programas..." />
-          </div>
-        </Grid2>
-        <div>
-          <Label>Link de la carpeta</Label>
-          <Input value={form.link_carpeta} onChange={f('link_carpeta')} placeholder="https://drive.google.com/..." type="url" />
-        </div>
-      </SectionCard>
-
-      {/* 2. Prioridades */}
-      <SectionCard title="Prioridades">
-        <div>
-          <Label>Prioridades temáticas</Label>
-          <Textarea value={form.prioridades_tematicas} onChange={f('prioridades_tematicas')} placeholder="Áreas y sectores de intervención que financia el donante..." />
-        </div>
-        <Grid2>
-          <div>
-            <Label>Prioridades geográficas</Label>
-            <Textarea value={form.prioridades_geograficas} onChange={f('prioridades_geograficas')} placeholder="Regiones, provincias, distritos..." rows={2} />
-          </div>
-          <div>
-            <Label>Prioridades demográficas</Label>
-            <Textarea value={form.prioridades_demograficas} onChange={f('prioridades_demograficas')} placeholder="Población objetivo: mujeres, niños, indígenas..." rows={2} />
-          </div>
-        </Grid2>
-      </SectionCard>
-
-      {/* 3. Aspectos Financieros */}
-      <SectionCard title="Aspectos Financieros">
-        <Grid2>
-          <div>
-            <Label>Presupuesto total (USD)</Label>
-            <Input value={form.presupuesto_total} onChange={f('presupuesto_total')} placeholder="500000" type="number" />
-          </div>
-          <div>
-            <Label>ICR permitido (%)</Label>
-            <Input value={form.icr_permitido} onChange={f('icr_permitido')} placeholder="10" type="number" />
-          </div>
-        </Grid2>
-        <Grid2>
-          <div>
-            <Label>Duración (meses)</Label>
-            <Input value={form.duracion_meses} onChange={f('duracion_meses')} placeholder="24" type="number" />
-          </div>
-          <div>
-            <Label>Fase(s) de la propuesta</Label>
-            <select value={form.fases_propuesta} onChange={f('fases_propuesta')}
-              className="w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">Seleccionar</option>
-              <option value="1">1 etapa</option>
-              <option value="2">2 etapas</option>
-              <option value="3">3 etapas</option>
-            </select>
-          </div>
-        </Grid2>
-        <div>
-          <Label>Modalidad de desembolso</Label>
-          <div className="flex gap-2">
-            {['Subvención', 'Servicio'].map(op => (
-              <button key={op} type="button" onClick={() => setForm(p => ({ ...p, modalidad_desembolso: op }))}
-                className={`px-4 py-2 text-sm rounded-lg border transition-colors font-medium ${form.modalidad_desembolso === op ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}>
-                {op}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex gap-8">
-          <Toggle value={form.requiere_match} onChange={b('requiere_match')} label="Requiere contrapartida (match)" />
-          <Toggle value={form.requiere_socio} onChange={b('requiere_socio')} label="Requiere socio implementador" />
-        </div>
-      </SectionCard>
-
-      {/* 4. Fechas Clave */}
-      <SectionCard title="Fechas Clave">
-        <Grid2>
-          <div>
-            <Label>Deadline for Questions</Label>
-            <Input value={form.deadline_preguntas} onChange={f('deadline_preguntas')} type="date" />
-          </div>
-          <div>
-            <Label>Deadline for Submission</Label>
-            <Input value={form.deadline_envio} onChange={f('deadline_envio')} type="date" />
-          </div>
-        </Grid2>
-        <Grid2>
-          <div>
-            <Label>Fecha probable de respuesta</Label>
-            <Input value={form.fecha_probable_respuesta} onChange={f('fecha_probable_respuesta')} type="date" />
-          </div>
-          <div>
-            <Label>Fecha probable de inicio</Label>
-            <Input value={form.fecha_probable_inicio} onChange={f('fecha_probable_inicio')} type="date" />
-          </div>
-        </Grid2>
-        <div className="max-w-sm">
-          <Label>Fecha probable de fin</Label>
-          <Input value={form.fecha_probable_fin} onChange={f('fecha_probable_fin')} type="date" />
-        </div>
-      </SectionCard>
-
-      {/* 5. Contexto y Objetivos */}
-      <SectionCard title="Contexto y Objetivos">
-        <div>
-          <Label>Contexto</Label>
-          <Textarea value={form.contexto} onChange={f('contexto')} placeholder="Antecedentes y justificación de la convocatoria..." rows={4} />
-        </div>
-        <div>
-          <Label>Objetivo General</Label>
-          <Textarea value={form.objetivo_general} onChange={f('objetivo_general')} placeholder="Objetivo principal de la convocatoria..." rows={3} />
-        </div>
-        <div>
-          <Label>Objetivos Específicos</Label>
-          <Textarea value={form.objetivos_especificos} onChange={f('objetivos_especificos')} placeholder={"OE1: ...\nOE2: ...\nOE3: ..."} rows={4} />
-        </div>
-        <div>
-          <Label>Puntos clave de la convocatoria</Label>
-          <Textarea value={form.puntos_clave} onChange={f('puntos_clave')} placeholder="Elegibilidad, restricciones y requisitos críticos..." rows={4} />
-        </div>
-      </SectionCard>
-
-      {error && (
-        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
-      )}
-
-      <div className="flex gap-3 pt-1">
-        <button onClick={onGuardar} disabled={!form.titulo || saving}
-          className="px-6 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm">
-          {saving ? 'Guardando...' : 'Guardar y enviar a Go/No-Go'}
-        </button>
-        <button onClick={onCancelar}
-          className="px-6 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
-          Cancelar
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ── Componente principal ──────────────────────────────────
+// ─── Componente principal ─────────────────────────────────────────────────────
 export default function Radar() {
-  const [flowState, setFlowState] = useState(STATES.IDLE)
-  const [files, setFiles]         = useState([])
-  const [urls, setUrls]           = useState([])
-  const [urlInput, setUrlInput]   = useState('')
-  const [dragging, setDragging]   = useState(false)
-  const [progress, setProgress]   = useState('')
-  const [form, setForm]           = useState(emptyForm)
-  const [error, setError]         = useState(null)
-  const fileInputRef              = useRef(null)
+  const [step, setStep]       = useState(IDLE)
+  const [form, setForm]       = useState(emptyForm)
+  const [error, setError]     = useState(null)
+  const [files, setFiles]     = useState([])       // archivos seleccionados
+  const [urlInput, setUrlInput] = useState('')
+  const [isDragging, setIsDragging] = useState(false)
+  const [, setSavedId] = useState(null)
+  const [debug, setDebug] = useState(null)   // { textLen, rawAI }
+  const fileInputRef = useRef(null)
 
-  const hasContent = files.length > 0 || urls.length > 0
+  // ── Actualizar campo del formulario ──────────────────────────────────────────
+  const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }))
 
-  const VALID_EXTS = ['.pdf', '.docx', '.xlsx', '.xls', '.pptx']
-  const isValidFile = (f) => VALID_EXTS.some(ext => f.name.toLowerCase().endsWith(ext))
-
-  const addFiles = (newFiles) => {
-    const valid = Array.from(newFiles).filter(isValidFile)
-    setFiles(prev => { const names = new Set(prev.map(f => f.name)); return [...prev, ...valid.filter(f => !names.has(f.name))] })
+  // ── Manejo de archivos ────────────────────────────────────────────────────────
+  function onDrop(e) {
+    e.preventDefault()
+    setIsDragging(false)
+    const dropped = Array.from(e.dataTransfer.files)
+    setFiles(prev => [...prev, ...dropped])
   }
-  const removeFile = (name) => setFiles(prev => prev.filter(f => f.name !== name))
 
-  const addUrl = () => {
-    const trimmed = urlInput.trim()
-    if (!trimmed || urls.includes(trimmed)) return
-    try { new URL(trimmed) } catch { setError('URL inválida'); return }
-    setUrls(prev => [...prev, trimmed]); setUrlInput(''); setError(null)
+  function onFileInput(e) {
+    const selected = Array.from(e.target.files)
+    setFiles(prev => [...prev, ...selected])
+    e.target.value = ''
   }
-  const removeUrl = (url) => setUrls(prev => prev.filter(u => u !== url))
 
-  const handleProcesar = async () => {
+  function removeFile(idx) {
+    setFiles(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  // ── Iniciar análisis ──────────────────────────────────────────────────────────
+  async function handleAnalyze() {
+    if (files.length === 0 && !urlInput.trim()) {
+      setError('Agrega al menos un documento o una URL antes de analizar.')
+      return
+    }
+    setError(null)
+
+    try {
+      // 1. Extraer texto
+      setStep(EXTRACTING)
+      const textos = []
+
+      for (const file of files) {
+        const txt = await extractFromFile(file)
+        textos.push(txt)
+      }
+
+      if (urlInput.trim()) {
+        const txt = await extractFromUrl(urlInput.trim())
+        textos.push(txt)
+      }
+
+      const textoTotal = textos.join('\n\n---\n\n')
+
+      if (!textoTotal.trim()) {
+        throw new Error('No se pudo extraer texto del documento. Verifica que el archivo no esté protegido o vacío.')
+      }
+
+      // 2. Analizar con IA
+      setStep(ANALYZING)
+      const resultado = await analizarConvocatoria(textoTotal)
+
+      // Guardar info de diagnóstico
+      const camposRellenos = Object.values(resultado).filter(v => v !== null && v !== undefined && v !== '').length
+      setDebug({ textLen: textoTotal.length, camposRellenos, total: Object.keys(resultado).length })
+
+      // 3. Llenar formulario
+      setForm(prev => {
+        const next = { ...prev }
+        Object.entries(resultado).forEach(([k, v]) => {
+          if (v !== null && v !== undefined && k in next) {
+            next[k] = String(v)
+          }
+        })
+        return next
+      })
+
+      setStep(REVIEW)
+    } catch (err) {
+      setError(err.message)
+      setStep(IDLE)
+    }
+  }
+
+  // ── Guardar en Supabase ───────────────────────────────────────────────────────
+  async function handleSave() {
+    setStep(SAVING)
     setError(null)
     try {
-      setFlowState(STATES.EXTRACTING)
-      const textos = []
-      for (const file of files) { setProgress(`Leyendo ${file.name}...`); textos.push(await extractFromFile(file)) }
-      for (const url of urls)   { setProgress(`Leyendo ${url}...`);       textos.push(await extractFromUrl(url)) }
-      setFlowState(STATES.ANALYZING)
-      const r = await analizarConvocatoria(textos.join('\n\n---\n\n'))
-      setForm({
-        titulo: r.titulo ?? '', donante: r.donante ?? '', link_carpeta: r.link_carpeta ?? '',
-        prioridades_tematicas: r.prioridades_tematicas ?? '', gerencia: r.gerencia ?? '',
-        prioridades_geograficas: r.prioridades_geograficas ?? '', prioridades_demograficas: r.prioridades_demograficas ?? '',
-        duracion_meses: r.duracion_meses ?? '', presupuesto_total: r.presupuesto_total ?? '',
-        icr_permitido: r.icr_permitido ?? '', modalidad_desembolso: r.modalidad_desembolso ?? 'Subvención',
-        requiere_match: r.requiere_match ?? false, requiere_socio: r.requiere_socio ?? false,
-        fases_propuesta: r.fases_propuesta ?? '',
-        deadline_preguntas: r.deadline_preguntas ?? '', deadline_envio: r.deadline_envio ?? '',
-        fecha_probable_respuesta: r.fecha_probable_respuesta ?? '', fecha_probable_inicio: r.fecha_probable_inicio ?? '',
-        fecha_probable_fin: r.fecha_probable_fin ?? '',
-        contexto: r.contexto ?? '', objetivo_general: r.objetivo_general ?? '',
-        objetivos_especificos: r.objetivos_especificos ?? '', puntos_clave: r.puntos_clave ?? '',
-      })
-      setFlowState(STATES.REVIEW)
-    } catch (err) { setError(err.message); setFlowState(STATES.IDLE) }
+      const payload = {
+        titulo:                  form.titulo                  || null,
+        donante:                 form.donante                 || null,
+        prioridades_tematicas:   form.prioridades_tematicas   || null,
+        gerencia:                form.gerencia                || null,
+        prioridades_geograficas: form.prioridades_geograficas || null,
+        prioridades_demograficas:form.prioridades_demograficas|| null,
+        duracion_meses:          form.duracion_meses          ? Number(form.duracion_meses)     : null,
+        presupuesto_total:       form.presupuesto_total       ? Number(form.presupuesto_total)  : null,
+        icr_permitido:           form.icr_permitido           ? Number(form.icr_permitido)      : null,
+        modalidad_desembolso:    form.modalidad_desembolso    || null,
+        requiere_match:          form.requiere_match === 'true' ? true : form.requiere_match === 'false' ? false : null,
+        requiere_socio:          form.requiere_socio === 'true' ? true : form.requiere_socio === 'false' ? false : null,
+        fases_propuesta:         form.fases_propuesta         || null,
+        deadline_preguntas:      form.deadline_preguntas      || null,
+        deadline_envio:          form.deadline_envio          || null,
+        fecha_probable_respuesta:form.fecha_probable_respuesta|| null,
+        fecha_probable_inicio:   form.fecha_probable_inicio   || null,
+        fecha_probable_fin:      form.fecha_probable_fin      || null,
+        contexto:                form.contexto                || null,
+        objetivo_general:        form.objetivo_general        || null,
+        objetivos_especificos:   form.objetivos_especificos   || null,
+        puntos_clave:            form.puntos_clave            || null,
+        estado:                  'En Evaluación',
+      }
+
+      const { data, error: sbError } = await supabase
+        .from('propuestas')
+        .insert([payload])
+        .select()
+
+      if (sbError) throw sbError
+      setSavedId(data[0]?.id)
+      setStep(DONE)
+    } catch (err) {
+      setError(err.message)
+      setStep(REVIEW)
+    }
   }
 
-  const handleGuardar = async () => {
-    setFlowState(STATES.SAVING)
-    const { error: sbError } = await supabase.from('propuestas').insert([{
-      titulo: form.titulo, donante: form.donante, link_carpeta: form.link_carpeta || null,
-      prioridades_tematicas: form.prioridades_tematicas || null,
-      prioridades_estrategicas: form.prioridades_tematicas || null,
-      gerencia: form.gerencia || null,
-      prioridades_geograficas: form.prioridades_geograficas || null,
-      prioridades_demograficas: form.prioridades_demograficas || null,
-      duracion_meses: parseInt(form.duracion_meses) || null,
-      presupuesto_total: parseFloat(form.presupuesto_total) || null,
-      icr_permitido: parseFloat(form.icr_permitido) || null,
-      modalidad_desembolso: form.modalidad_desembolso || null,
-      requiere_match: form.requiere_match, requiere_socio: form.requiere_socio,
-      fases_propuesta: form.fases_propuesta || null,
-      deadline_preguntas: form.deadline_preguntas || null,
-      deadline_envio: form.deadline_envio || null,
-      fecha_probable_respuesta: form.fecha_probable_respuesta || null,
-      fecha_probable_inicio: form.fecha_probable_inicio || null,
-      fecha_probable_fin: form.fecha_probable_fin || null,
-      contexto: form.contexto || null,
-      objetivo_general: form.objetivo_general || null,
-      objetivos_especificos: form.objetivos_especificos || null,
-      puntos_clave: form.puntos_clave || null,
-      estado: 'En Evaluación',
-    }])
-    if (sbError) { setError('Error Supabase: ' + sbError.message); setFlowState(STATES.REVIEW) }
-    else setFlowState(STATES.DONE)
+  // ── Reset ─────────────────────────────────────────────────────────────────────
+  function handleReset() {
+    setStep(IDLE)
+    setForm(emptyForm)
+    setFiles([])
+    setUrlInput('')
+    setError(null)
+    setSavedId(null)
   }
 
-  const handleReset = () => { setFlowState(STATES.IDLE); setFiles([]); setUrls([]); setUrlInput(''); setForm(emptyForm); setError(null) }
-
-  // ── Renders condicionales ─────────────────────────────────
-  if (flowState === STATES.DONE) {
+  // ── DONE ──────────────────────────────────────────────────────────────────────
+  if (step === DONE) {
     return (
-      <div className="max-w-lg">
-        <div className="rounded-xl border border-green-200 bg-green-50 p-10 text-center shadow-sm">
-          <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-          </div>
-          <p className="text-base font-semibold text-green-800">Propuesta guardada</p>
-          <p className="text-sm text-green-600 mt-1"><strong>{form.titulo}</strong> está en Go/No-Go.</p>
-          <button onClick={handleReset} className="mt-6 px-5 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors shadow-sm">
-            Ingresar otra convocatoria
-          </button>
+      <div className="p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
+        <div className="w-12 h-12 rounded-full bg-[#dafbe1] flex items-center justify-center mb-4">
+          <svg className="text-[#1a7f37]" width="24" height="24" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>
+          </svg>
         </div>
+        <h2 className="text-xl font-semibold text-[#24292f] mb-1">Convocatoria guardada</h2>
+        <p className="text-sm text-[#57606a] mb-6">
+          La propuesta fue guardada con estado <strong>En Evaluación</strong>.
+          Puedes evaluarla en el módulo Go / No-Go.
+        </p>
+        <button
+          onClick={handleReset}
+          className="bg-[#2da44e] text-white px-4 py-2 text-sm font-medium rounded-md border border-[rgba(27,31,36,0.15)] shadow-sm hover:bg-[#2c974b] transition-colors"
+        >
+          Analizar otra convocatoria
+        </button>
       </div>
     )
   }
 
-  if (flowState === STATES.EXTRACTING || flowState === STATES.ANALYZING) {
-    return <LoadingScreen state={flowState} progress={progress} />
+  // ── IDLE — pantalla de carga ──────────────────────────────────────────────────
+  if (step === IDLE || step === EXTRACTING || step === ANALYZING) {
+    return (
+      <div className="p-6 max-w-2xl mx-auto">
+        <h2 className="text-base font-semibold text-[#24292f] mb-1">Nueva Convocatoria</h2>
+        <p className="text-sm text-[#57606a] mb-5">
+          Sube documentos y/o pega una URL. La IA extraerá los datos clave automáticamente.
+        </p>
+
+        {/* URL Input */}
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-[#57606a] mb-1.5">URL de la convocatoria</label>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              placeholder="https://www.donante.org/convocatoria-2025"
+              value={urlInput}
+              onChange={e => setUrlInput(e.target.value)}
+              className={inputCls + ' flex-1'}
+              disabled={step !== IDLE}
+            />
+          </div>
+        </div>
+
+        {/* Dropzone */}
+        <div
+          onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={onDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`border-2 border-dashed rounded-md px-6 py-10 text-center cursor-pointer transition-colors mb-4 ${
+            isDragging
+              ? 'border-[#0969da] bg-[#ddf4ff]'
+              : 'border-[#d0d7de] bg-[#f6f8fa] hover:border-[#0969da] hover:bg-[#f0f6ff]'
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={ACCEPTED_EXTENSIONS}
+            onChange={onFileInput}
+            className="hidden"
+          />
+          <svg className="mx-auto mb-3 text-[#8c959f]" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <p className="text-sm font-medium text-[#24292f]">Arrastra archivos aquí o haz clic para seleccionar</p>
+          <p className="text-xs text-[#57606a] mt-1">PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx)</p>
+        </div>
+
+        {/* Lista de archivos */}
+        {files.length > 0 && (
+          <div className="border border-[#d0d7de] rounded-md divide-y divide-[#d0d7de] mb-4 overflow-hidden">
+            {files.map((file, idx) => {
+              const { icon } = getFileIcon(file.name)
+              return (
+                <div key={idx} className="flex items-center gap-3 px-4 py-2.5 bg-white">
+                  <span className="text-lg">{icon}</span>
+                  <span className="flex-1 text-sm text-[#24292f] truncate">{file.name}</span>
+                  <span className="text-xs text-[#57606a] mr-2">{(file.size / 1024).toFixed(0)} KB</span>
+                  <button
+                    onClick={e => { e.stopPropagation(); removeFile(idx) }}
+                    className="text-[#57606a] hover:text-[#cf222e] transition-colors"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                      <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+                    </svg>
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="mb-4 flex items-start gap-2 bg-[#fff8c5] border border-[#d4a72c] text-[#7d4e00] rounded-md px-4 py-3 text-sm">
+            <svg className="flex-shrink-0 mt-0.5" width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0114.082 15H1.918a1.75 1.75 0 01-1.543-2.575zm1.763.707a.25.25 0 00-.44 0L1.698 13.132a.25.25 0 00.22.368h12.164a.25.25 0 00.22-.368zM9 11a1 1 0 11-2 0 1 1 0 012 0zm-.25-5.25a.75.75 0 00-1.5 0v2.5a.75.75 0 001.5 0z"/>
+            </svg>
+            {error}
+          </div>
+        )}
+
+        {/* Estado de procesamiento */}
+        {(step === EXTRACTING || step === ANALYZING) && (
+          <div className="flex items-center gap-3 text-sm text-[#57606a] mb-4 bg-[#f6f8fa] border border-[#d0d7de] rounded-md px-4 py-3">
+            <svg className="animate-spin text-[#0969da]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12a9 9 0 11-6.219-8.56"/>
+            </svg>
+            {step === EXTRACTING ? 'Extrayendo texto del documento…' : 'La IA está analizando la convocatoria…'}
+          </div>
+        )}
+
+        {/* Botón */}
+        <button
+          onClick={handleAnalyze}
+          disabled={step !== IDLE}
+          className="w-full bg-[#2da44e] text-white py-2 text-sm font-medium rounded-md border border-[rgba(27,31,36,0.15)] shadow-sm hover:bg-[#2c974b] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {step === IDLE ? 'Analizar con IA' : 'Procesando…'}
+        </button>
+      </div>
+    )
   }
 
-  if (flowState === STATES.REVIEW || flowState === STATES.SAVING) {
-    return <ReviewForm form={form} setForm={setForm} onGuardar={handleGuardar}
-      onCancelar={handleReset} saving={flowState === STATES.SAVING} error={error} />
-  }
-
-  // ── IDLE ──────────────────────────────────────────────────
-  const totalFuentes = files.length + urls.length
+  // ── REVIEW — formulario ───────────────────────────────────────────────────────
   return (
-    <div className="max-w-2xl space-y-4">
-
-      {/* URLs */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-3">
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Páginas web de la convocatoria</p>
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="text-base font-semibold text-[#24292f]">Revisar datos extraídos</h2>
+          <p className="text-xs text-[#57606a] mt-0.5">Verifica y corrige la información antes de guardar.</p>
+        </div>
         <div className="flex gap-2">
-          <input type="url" value={urlInput} onChange={e => setUrlInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addUrl()}
-            placeholder="https://donante.org/convocatoria-2026"
-            className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
-          <button onClick={addUrl} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm">
-            Agregar
+          <button
+            onClick={handleReset}
+            className="px-3 py-1.5 text-sm font-medium text-[#24292f] bg-white border border-[#d0d7de] rounded-md hover:bg-[#f3f4f6] transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={step === SAVING}
+            className="px-4 py-1.5 text-sm font-medium text-white bg-[#2da44e] border border-[rgba(27,31,36,0.15)] rounded-md shadow-sm hover:bg-[#2c974b] disabled:opacity-50 transition-colors"
+          >
+            {step === SAVING ? 'Guardando…' : 'Guardar en Pipeline'}
           </button>
         </div>
-        {urls.length > 0 && (
-          <ul className="space-y-1">
-            {urls.map(url => (
-              <li key={url} className="flex items-center justify-between gap-2 text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
-                <span className="truncate">{url}</span>
-                <button onClick={() => removeUrl(url)} className="text-gray-400 hover:text-red-500 flex-shrink-0 transition-colors">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
-      {/* Dropzone */}
-      <div onDragOver={e => { e.preventDefault(); setDragging(true) }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files) }}
-        onClick={() => fileInputRef.current?.click()}
-        className={`cursor-pointer rounded-xl border-2 border-dashed p-10 text-center transition-all ${dragging ? 'border-blue-400 bg-blue-50 scale-[1.01]' : 'border-gray-300 bg-white hover:border-blue-300 hover:bg-blue-50/30'}`}>
-        <input ref={fileInputRef} type="file" accept={ACCEPTED_EXTENSIONS} multiple className="hidden" onChange={e => { addFiles(e.target.files); e.target.value = '' }} />
-        <svg className="mx-auto mb-3 text-gray-300" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
-        <p className="text-sm font-medium text-gray-600">Arrastra documentos aquí o haz clic</p>
-        <p className="text-xs text-gray-400 mt-1">PDF · Word (.docx) · Excel (.xlsx) · PowerPoint (.pptx)</p>
-      </div>
-
-      {/* Archivos */}
-      {files.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-2">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Documentos ({files.length})</p>
-          {files.map(f => {
-            const { icon } = getFileIcon(f.name)
-            return (
-              <div key={f.name} className="flex items-center justify-between gap-2 text-sm text-gray-700">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span>{icon}</span>
-                  <span className="truncate">{f.name}</span>
-                  <span className="text-gray-400 text-xs flex-shrink-0">({(f.size / 1024).toFixed(0)} KB)</span>
-                </div>
-                <button onClick={() => removeFile(f.name)} className="text-gray-300 hover:text-red-400 flex-shrink-0 transition-colors">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </div>
-            )
-          })}
+      {error && (
+        <div className="mb-4 flex items-start gap-2 bg-[#fff8c5] border border-[#d4a72c] text-[#7d4e00] rounded-md px-4 py-3 text-sm">
+          <svg className="flex-shrink-0 mt-0.5" width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0114.082 15H1.918a1.75 1.75 0 01-1.543-2.575zm1.763.707a.25.25 0 00-.44 0L1.698 13.132a.25.25 0 00.22.368h12.164a.25.25 0 00.22-.368zM9 11a1 1 0 11-2 0 1 1 0 012 0zm-.25-5.25a.75.75 0 00-1.5 0v2.5a.75.75 0 001.5 0z"/>
+          </svg>
+          {error}
         </div>
       )}
 
-      {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"><strong>Error:</strong> {error}</div>}
+      {/* ── Diagnóstico ── */}
+      {debug && (
+        <div className={`mb-4 flex items-center gap-3 px-4 py-2.5 rounded-md border text-sm ${
+          debug.camposRellenos === 0
+            ? 'bg-[#fff8c5] border-[#d4a72c] text-[#7d4e00]'
+            : 'bg-[#dafbe1] border-[#4ac26b] text-[#1a7f37]'
+        }`}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            {debug.camposRellenos === 0
+              ? <path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0114.082 15H1.918a1.75 1.75 0 01-1.543-2.575zm1.763.707a.25.25 0 00-.44 0L1.698 13.132a.25.25 0 00.22.368h12.164a.25.25 0 00.22-.368zM9 11a1 1 0 11-2 0 1 1 0 012 0zm-.25-5.25a.75.75 0 00-1.5 0v2.5a.75.75 0 001.5 0z"/>
+              : <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>
+            }
+          </svg>
+          <span>
+            Texto extraído: <strong>{debug.textLen.toLocaleString()} caracteres</strong> ·
+            Campos detectados por IA: <strong>{debug.camposRellenos} / {debug.total}</strong>
+            {debug.camposRellenos === 0 && ' — El modelo no detectó datos. ¿Está corriendo Ollama? ¿El documento tiene texto seleccionable?'}
+          </span>
+        </div>
+      )}
 
-      <button onClick={handleProcesar} disabled={!hasContent}
-        className="px-6 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm flex items-center gap-2">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/>
-        </svg>
-        Analizar con IA {totalFuentes > 0 && `(${totalFuentes} ${totalFuentes === 1 ? 'fuente' : 'fuentes'})`}
-      </button>
+      {/* ── 1. Información General ── */}
+      <SectionCard title="Información General">
+        <Field label="Título de la convocatoria" full>
+          <input value={form.titulo} onChange={set('titulo')} className={inputCls} placeholder="Nombre oficial" />
+        </Field>
+        <Field label="Donante">
+          <input value={form.donante} onChange={set('donante')} className={inputCls} placeholder="USAID, ECHO…" />
+        </Field>
+        <Field label="Gerencia CARE">
+          <input value={form.gerencia} onChange={set('gerencia')} className={inputCls} placeholder="Gerencia interna" />
+        </Field>
+        <Field label="Modalidad">
+          <select value={form.modalidad_desembolso} onChange={set('modalidad_desembolso')} className={inputCls}>
+            <option value="">— Seleccionar —</option>
+            <option value="Subvención">Subvención (Grant)</option>
+            <option value="Servicio">Servicio (Contrato)</option>
+          </select>
+        </Field>
+        <Field label="Fases de postulación">
+          <select value={form.fases_propuesta} onChange={set('fases_propuesta')} className={inputCls}>
+            <option value="">— Seleccionar —</option>
+            <option value="1">1 fase</option>
+            <option value="2">2 fases</option>
+            <option value="3">3 fases</option>
+          </select>
+        </Field>
+        <Field label="¿Requiere Match / Contrapartida?">
+          <select value={form.requiere_match} onChange={set('requiere_match')} className={inputCls}>
+            <option value="">— Seleccionar —</option>
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </Field>
+        <Field label="¿Requiere Socio / Consorcio?">
+          <select value={form.requiere_socio} onChange={set('requiere_socio')} className={inputCls}>
+            <option value="">— Seleccionar —</option>
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </Field>
+      </SectionCard>
+
+      {/* ── 2. Prioridades ── */}
+      <SectionCard title="Prioridades">
+        <Field label="Prioridades Temáticas" full>
+          <textarea rows={2} value={form.prioridades_tematicas} onChange={set('prioridades_tematicas')} className={inputCls + ' resize-none'} placeholder="Áreas temáticas y sectores…" />
+        </Field>
+        <Field label="Prioridades Geográficas">
+          <textarea rows={2} value={form.prioridades_geograficas} onChange={set('prioridades_geograficas')} className={inputCls + ' resize-none'} placeholder="Regiones, provincias, distritos…" />
+        </Field>
+        <Field label="Prioridades Demográficas">
+          <textarea rows={2} value={form.prioridades_demograficas} onChange={set('prioridades_demograficas')} className={inputCls + ' resize-none'} placeholder="Población objetivo…" />
+        </Field>
+      </SectionCard>
+
+      {/* ── 3. Aspectos Financieros ── */}
+      <SectionCard title="Aspectos Financieros">
+        <Field label="Presupuesto Total (USD)">
+          <input type="number" value={form.presupuesto_total} onChange={set('presupuesto_total')} className={inputCls} placeholder="500000" />
+        </Field>
+        <Field label="ICR Permitido (%)">
+          <input type="number" value={form.icr_permitido} onChange={set('icr_permitido')} className={inputCls} placeholder="10" />
+        </Field>
+        <Field label="Duración (meses)">
+          <input type="number" value={form.duracion_meses} onChange={set('duracion_meses')} className={inputCls} placeholder="24" />
+        </Field>
+      </SectionCard>
+
+      {/* ── 4. Fechas Clave ── */}
+      <SectionCard title="Fechas Clave">
+        <Field label="Deadline Preguntas">
+          <input type="date" value={form.deadline_preguntas} onChange={set('deadline_preguntas')} className={inputCls} />
+        </Field>
+        <Field label="Deadline Envío Propuesta">
+          <input type="date" value={form.deadline_envio} onChange={set('deadline_envio')} className={inputCls} />
+        </Field>
+        <Field label="Probable Respuesta">
+          <input type="date" value={form.fecha_probable_respuesta} onChange={set('fecha_probable_respuesta')} className={inputCls} />
+        </Field>
+        <Field label="Probable Inicio del Proyecto">
+          <input type="date" value={form.fecha_probable_inicio} onChange={set('fecha_probable_inicio')} className={inputCls} />
+        </Field>
+        <Field label="Probable Fin del Proyecto">
+          <input type="date" value={form.fecha_probable_fin} onChange={set('fecha_probable_fin')} className={inputCls} />
+        </Field>
+      </SectionCard>
+
+      {/* ── 5. Contexto y Objetivos ── */}
+      <SectionCard title="Contexto y Objetivos">
+        <Field label="Contexto / Antecedentes" full>
+          <textarea rows={4} value={form.contexto} onChange={set('contexto')} className={inputCls + ' resize-y'} placeholder="Descripción del contexto según el donante…" />
+        </Field>
+        <Field label="Objetivo General" full>
+          <textarea rows={3} value={form.objetivo_general} onChange={set('objetivo_general')} className={inputCls + ' resize-y'} placeholder="Objetivo principal de la convocatoria…" />
+        </Field>
+        <Field label="Objetivos Específicos / Resultados" full>
+          <textarea rows={4} value={form.objetivos_especificos} onChange={set('objetivos_especificos')} className={inputCls + ' resize-y'} placeholder="Uno por línea…" />
+        </Field>
+        <Field label="Puntos Clave / Requisitos de Elegibilidad" full>
+          <textarea rows={4} value={form.puntos_clave} onChange={set('puntos_clave')} className={inputCls + ' resize-y'} placeholder="Restricciones, criterios, notas importantes…" />
+        </Field>
+      </SectionCard>
     </div>
   )
 }

@@ -17,23 +17,25 @@ function Layout() {
   const meta = pageMeta[pathname] ?? { title: 'CARE Fondos', subtitle: '' }
 
   return (
-    <div className="flex min-h-screen bg-[#f5f5f3]">
+    <div className="flex min-h-screen bg-[#f6f8fa]">
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Page header */}
-        <header className="bg-[#f5f5f3] border-b border-gray-100 px-8 py-4">
-          <h1 className="text-lg font-semibold text-gray-900 tracking-tight">{meta.title}</h1>
-          <p className="text-xs text-gray-400 mt-0.5 font-medium">{meta.subtitle}</p>
+        {/* Page header estilo GitHub Repo */}
+        <header className="bg-[#f6f8fa] border-b border-[#d0d7de] px-8 py-6">
+          <h1 className="text-2xl font-semibold text-[#24292f] tracking-tight">{meta.title}</h1>
+          <p className="text-sm text-[#57606a] mt-1">{meta.subtitle}</p>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 px-8 py-6 overflow-y-auto">
-          <Routes>
-            <Route path="/"          element={<Radar />} />
-            <Route path="/gonogo"    element={<GoNoGo />} />
-            <Route path="/workspace" element={<Workspace />} />
-            <Route path="/pipeline"  element={<Pipeline />} />
-          </Routes>
+        {/* Page content encapsulado en un contenedor tipo "repositorio" */}
+        <main className="flex-1 p-8 overflow-y-auto">
+          <div className="bg-white border border-[#d0d7de] rounded-md shadow-sm min-h-full">
+            <Routes>
+              <Route path="/"          element={<Radar />} />
+              <Route path="/gonogo"    element={<GoNoGo />} />
+              <Route path="/workspace" element={<Workspace />} />
+              <Route path="/pipeline"  element={<Pipeline />} />
+            </Routes>
+          </div>
         </main>
       </div>
     </div>
